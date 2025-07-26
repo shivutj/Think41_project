@@ -1,61 +1,83 @@
 const express = require('express');
 const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const { sequelize, User, Conversation, Message, Product, Order } = require('./models');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+const { sequelize } = require('./models');
+const authRoutes = require('./routes/auth');
+const chatRoutes = require('./routes/chat');
+const { authenticateToken } = require('./middleware/auth');
+
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3001;
 
-app.use(cors());
-app.use(express.json());
+// Security middleware
+app.use(helmet());
 
-// Initialize database
-async function initializeDatabase() {
-  try {
-    await sequelize.authenticate();
-    console.log('Database connected successfully.');
-    await sequelize.sync();
-    console.log('Database synchronized.');
-  } catch (error) {
-    console.error('Database error:', error);
-  }
-}
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
+});
+app.use('/api/', limiter);
+
+// CORS configuration
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true,
+  optionsSuccessStatus: 200
+};
+
+// Middleware
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server running!', timestamp: new Date().toISOString() });
-});
-
-// Chat endpoint
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { message, user_id } = req.body;
-    
-    if (!message || !user_id) {
-      return res.status(400).json({ error: 'Message and user_id required' });
-    }
-
-    // Simple response for now
-    const response = `Echo: ${message}`;
-    
-    res.json({
-      response,
-      conversation_id: uuidv4(),
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('Chat error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Start server
-initializeDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  res.json({ 
+    status: 'Server running!', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-module.exports = app;
+
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Start server
+sequelize.sync({ alter: process.env.NODE_ENV === 'development' })
+  .then(() => {
+    console.log('Database connected successfully.');
+    console.log('Database synchronized.');
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+  })
+  .catch(err => {
+    console.error('Unable to connect to the database:', err);
+    process.exit(1);
+  });
