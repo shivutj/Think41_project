@@ -47,7 +47,7 @@ function App() {
   const loadConversation = async (conversationId) => {
     try {
       const response = await axios.get(`/api/chat/conversations/${conversationId}/messages`);
-      setCurrentConversation(response.data);
+      setCurrentConversation({ id: conversationId });
       setMessages(response.data.messages);
     } catch (error) {
       console.error('Error loading conversation:', error);
@@ -86,9 +86,21 @@ function App() {
     setError('');
 
     try {
-      const response = await axios.post('/api/chat/chat', {
-        message: inputMessage,
-        conversation_id: currentConversation?.conversation_id
+      let conversationId = currentConversation?.id;
+      
+      // Create new conversation if none exists
+      if (!conversationId) {
+        const newConvResponse = await axios.post('/api/chat/conversations', {
+          title: inputMessage.substring(0, 50) + (inputMessage.length > 50 ? '...' : '')
+        });
+        conversationId = newConvResponse.data.conversation.id;
+        setCurrentConversation(newConvResponse.data.conversation);
+        loadConversations(); // Refresh conversation list
+      }
+
+      // Send message to conversation
+      const response = await axios.post(`/api/chat/conversations/${conversationId}/messages`, {
+        message: inputMessage
       });
 
       const botMessage = { 
@@ -98,14 +110,6 @@ function App() {
       };
       setMessages(prev => [...prev, botMessage]);
 
-      // Update current conversation if it's new
-      if (!currentConversation) {
-        setCurrentConversation({
-          conversation_id: response.data.conversation_id,
-          title: inputMessage.substring(0, 50) + (inputMessage.length > 50 ? '...' : '')
-        });
-        loadConversations(); // Refresh conversation list
-      }
     } catch (error) {
       console.error('Error sending message:', error);
       let errorMessage = 'Sorry, something went wrong!';
